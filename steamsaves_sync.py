@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 # author: Lefteris Karapetsas
 # email: lefteris@refu.co
+#
+# USE AT YOUR OWN RISK. First make a backup of your saves.
+# This script is not guaranteed to work correctly at all times, especially
+# for games other than those that are tested and have saveName and saveTime
+# callbacks. Currently only PillarsOfEternity has been so tested.
 
 import subprocess
 import argparse
@@ -9,10 +14,15 @@ import filecmp
 import shutil
 from os import listdir
 from os.path import isfile, join, getmtime, basename
+import zipfile
+import xml.etree.ElementTree as ET
+import datetime
+
 
 shouldNotfy = True
 shouldCopyToDropbox = False
 shouldCopyToSteam = False
+
 
 def isclose(a, b, rel_tol=1e-09, abs_tol=0.0):
     return abs(a-b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
@@ -22,6 +32,10 @@ def defaultSaveNameCB(f):
     return basename(f)
 
 
+def defaultGetSaveTime(f):
+    return getmtime(f)
+
+
 class GameEntry():
     def __init__(
             self,
@@ -29,7 +43,8 @@ class GameEntry():
             steamPath,
             dropboxPath,
             saveSuffix=None,
-            saveNameCB=None
+            saveNameCB=None,
+            saveTimeCB=None
     ):
         """
         A Game Entry. It consists of:
@@ -46,6 +61,10 @@ class GameEntry():
                                 \"__IGNORE__\" then that save file is ignored.
                                 if the function returns the empty string
                                 there has been an error
+            saveTimeCB:         Optional callback to determine the in-game
+                                time the save was performed. If not given
+                                then the last file modification timestamp is
+                                taken which can't really be very trustworthy.
         """
         self.name = name
         self.dropboxPath = dropboxPath
@@ -54,24 +73,60 @@ class GameEntry():
         self.saveNameCB = saveNameCB
         if not saveNameCB:
             self.saveNameCB = defaultSaveNameCB
+        self.getSaveTime = saveTimeCB
+        if not saveTimeCB:
+            self.getSaveTime = defaultGetSaveTime
 
 
 def POESaveName(f):
     """
-    Pillars of Eternity change name depending on in-game location where the
-    save happens but there is a hash number which always stays constant.
-    Extract this and consider it as the save name.
+    Pillars of Eternity saves are actually zip archives. We are interested in
+    the saveinfo.xml file inside the archive since that contains the save game
+    name we use in-game.
 
     Ignore autosaves.
     """
     name = basename(f)
     res = name.rpartition(" ")
     if res[0] == "" and res[1] == "":
+        # malformed name
         return ""
     if res[2].startswith("autosave_"):
+        # ignore autosaves
         return "__IGNORE__"
-    return res[0]
 
+    # If we get here it's a user save. Get the user save name
+    archive = zipfile.ZipFile(f, 'r')
+    xmldata = archive.read('saveinfo.xml')
+    root = ET.fromstring(xmldata)
+    ret_name = ""
+    for p in root[0].findall('Simple'):
+        if p.get('name') == 'UserSaveName':
+            ret_name = p.get('value')
+            break
+    return ret_name
+
+
+def POESaveTime(f):
+    """
+    Pillars of Eternity saves are actually zip archives. We are interested in
+    the actual save was performed by the player.
+    the saveinfo.xml file inside the archive since that contains the time
+
+    Returns 0 if there is an error or the unix timestamp if it's determined
+    """
+    archive = zipfile.ZipFile(f, 'r')
+    xmldata = archive.read('saveinfo.xml')
+    root = ET.fromstring(xmldata)
+    ret_ts = 0
+    for p in root[0].findall('Simple'):
+        if p.get('name') == 'RealTimestamp':
+            sdate = p.get('value')
+            ret_ts = time.mktime(datetime.datetime.strptime(
+                sdate, "%m/%d/%Y %H:%M:%S").timetuple()
+            )
+            break
+    return ret_ts
 
 gamesList = [
     GameEntry(
@@ -79,7 +134,8 @@ gamesList = [
         "/home/lefteris/.local/share/PillarsOfEternity/SavedGames",
         "/home/lefteris/Dropbox/saves/PillarsOfEternity",
         "savegame",
-        POESaveName
+        POESaveName,
+        POESaveTime
     )
 ]
 
@@ -99,14 +155,18 @@ def findFileFromBasename(fileList, gentry, baseName):
     return None
 
 
-def compareFileTimes(file1, file2):
+def compareFileTimes(file1, file2, gentry):
     """
     Compare last file modification time for file1 and file2. Returns 0 if they
     have been modified around the same time, 1 if file1 is newer and -1 if
     file2 is newer
     """
-    t1 = getmtime(file1)
-    t2 = getmtime(file2)
+    t1 = gentry.getSaveTime(file1)
+    t2 = gentry.getSaveTime(file2)
+
+    if t1 == 0 or t2 == 0:
+        print("Failed to get time from a Save Game File")
+        exit(1)
 
     if isclose(t1, t2):
         return 0
@@ -117,8 +177,7 @@ def compareFileTimes(file1, file2):
 
 
 def syncSave(fromFile, toFile, gentry):
-    # shutil.copy(fromFile, toFile)
-    print("Would copy {} to {}".format(fromFile, toFile))
+    shutil.copy(fromFile, toFile)
     notify(
         "Synced save for {}".format(gentry.name),
         "Synced save \"{}\" {} Dropbox".format(
@@ -129,9 +188,20 @@ def syncSave(fromFile, toFile, gentry):
     )
 
 
+def savesAreSame(s1, s2):
+    return filecmp.cmp(s1, s2)
+
+
 def notify(title, message, priority):
     if shouldNotify:
-        subprocess.call(["notify-send", "-t", "0", priority, title, message])
+        subprocess.call([
+            "notify-send",
+            "-t", "4",
+            "-u", priority,
+            title,
+            message
+        ])
+    print("sync_saves [{}]:\t{}\n\t\t\t{}".format(priority, title, message))
 
 
 def syncEntry(gentry):
@@ -155,10 +225,10 @@ def syncEntry(gentry):
             continue
         dboxFile = findFileFromBasename(dboxFiles, gentry, baseName)
         if dboxFile:
-            if not filecmp.cmp(dboxFile, f):
+            if not savesAreSame(dboxFile, f):
                 # There is a corresponding file in dropbox
                 # and the files are not the same
-                cmpres = compareFileTimes(f, dboxFile)
+                cmpres = compareFileTimes(f, dboxFile, gentry)
                 if cmpres == 0:
                     # Files are different but time is the same for both.
                     # Can't really do anything
