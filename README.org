@@ -1,0 +1,25 @@
+
+* Introduction
+This is a tool I made for syncing save games across different machines to/from Dropbox.
+ *DO NOT USE* without backing up your saves first. For an in-depth guide please refer to
+[[http://blog.refu.co/?p=1375][this blogpost]].
+
+* Usage
+Calling the script is pretty straighforward:
+
+#+BEGIN_SRC txt
+./steamsaves_sync.py
+#+END_SRC
+
+In my Archlinux machine I use [[http://knopwob.org/dunst/index.html][dunst]] as a notification daemon to show notifications in my
+windows manager ([[https://i3wm.org/][i3-wm]]).
+
+This script assumes that you also have dunst installed. If you don't
+or if you don't want to get desktop notifications for each change the script does then also
+add the ~--no-notify~ option to the script.
+
+Once called the script will attempt to check all the save files from the local location and see
+if a corresponding save file is in Dropbox. If yes then it will check the save timestamp to see
+which one should be kept and keep it. Finally all Dropbox saves will also be checked to see if any
+saves are missing from the local directory.
+
