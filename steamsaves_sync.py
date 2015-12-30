@@ -297,10 +297,7 @@ if __name__ == '__main__':
     parser.set_defaults(copyToSteam=False)
     parser.set_defaults(copyToDropbox=False)
     args = parser.parse_args()
-    if args.shouldNotify:
-        print("Called with notify")
-    else:
-        print("Called without notify")
+
     shouldNotify = args.shouldNotify
     shouldCopyToDropbox = args.copyToDropbox
     shouldCopyToSteam = args.copyToSteam
