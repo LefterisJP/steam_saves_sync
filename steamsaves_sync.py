@@ -22,6 +22,7 @@ import datetime
 shouldNotfy = True
 shouldCopyToDropbox = False
 shouldCopyToSteam = False
+forceWork = False
 
 
 def isclose(a, b, rel_tol=1e-09, abs_tol=0.0):
@@ -209,6 +210,15 @@ def syncEntry(gentry):
     Takes a game entry and checks if saved games should be synced from/to
     Dropbox.
     """
+    if (
+            gentry.saveNameCB == defaultSaveNameCB or
+            gentry.getSaveTime == defaultGetSaveTime
+    ):
+        print("WARNING: Using a default function for game \"{}\". It's not "
+              "considered safe. Please read the guide to understand why or use"
+              " the --force argument to override.".format(gentry.name))
+        exit(1)
+
     steamFiles = getFileList(gentry.steamPath, gentry.saveSuffix)
     dboxFiles = getFileList(gentry.dropboxPath, gentry.saveSuffix)
 
@@ -293,14 +303,23 @@ if __name__ == '__main__':
         help="Instead of trying to determine sync from save names "
         "simply copy from Dropbox to Steam"
     )
+    parser.add_argument(
+        '--force',
+        dest='force',
+        action='store_true',
+        help="Normally the script will refuse to work with the default "
+        "functions for safety reasons. Use this argument to override it"
+    )
     parser.set_defaults(shouldNotify=True)
     parser.set_defaults(copyToSteam=False)
     parser.set_defaults(copyToDropbox=False)
+    parser.set_defaults(force=False)
     args = parser.parse_args()
 
     shouldNotify = args.shouldNotify
     shouldCopyToDropbox = args.copyToDropbox
     shouldCopyToSteam = args.copyToSteam
+    forceWork = args.force
 
     if shouldCopyToDropbox or shouldCopyToSteam:
         print("Not yet implemented")
